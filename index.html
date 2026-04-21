@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 空中猜謎遊戲 - Pictionary AI</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; color: white; font-family: sans-serif; }
+        #canvas-container { position: relative; width: 100vw; height: 100vh; }
+        video { transform: scaleX(-1); position: absolute; width: 100%; height: 100%; object-fit: cover; opacity: 0.3; }
+        canvas.p5Canvas { position: absolute; top: 0; left: 0; z-index: 5; }
+        .ui-panel {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 10; background: rgba(0,0,0,0.7); padding: 15px 30px;
+            border-radius: 50px; display: flex; gap: 20px; align-items: center;
+        }
+        .ai-status { position: absolute; top: 20px; right: 20px; background: #222; padding: 10px; border-radius: 10px; z-index: 10; border-left: 5px solid #00ffcc; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container">
+        <video id="input_video"></video>
+        <div class="ai-status">
+            AI 正在猜：<span id="ai-guess">等待繪圖...</span>
+        </div>
+        <div class="ui-panel">
+            <button onclick="clearCanvas()">清除畫布 (握拳)</button>
+            <span>提示：伸出食指開始繪畫</span>
+        </div>
+    </div>
+
+<script>
+    let handLandmarks = null;
+    let pg; // p5 繪圖層
+    const videoElement = document.getElementById('input_video');
+    let isDrawing = false;
+    let prevX = 0, prevY = 0;
+
+    // --- 1. MediaPipe 設定 ---
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+    });
+
+    hands.onResults((results) => {
+        handLandmarks = results.multiHandLandmarks;
+    });
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 1280,
+        height: 720
+    });
+    camera.start();
+
+    // --- 2. p5.js 實作 ---
+    function setup() {
+        let cnv = createCanvas(windowWidth, windowHeight);
+        cnv.parent('canvas-container');
+        
+        // 建立透明的繪圖層
+        pg = createGraphics(windowWidth, windowHeight);
+        pg.strokeWeight(8);
+        pg.stroke(0, 255, 204); // 螢光綠
+    }
+
+    function draw() {
+        clear(); // 清除主畫布（保持背景透明）
+        
+        if (handLandmarks && handLandmarks.length > 0) {
+            const hand = handLandmarks[0];
+            
+            // 取得食指指尖 (Index Finger Tip = Landmark 8)
+            // 座標需要水平翻轉 (1-x) 因為影像做了鏡像
+            let x = (1 - hand[8].x) * width;
+            let y = hand[8].y * height;
+            
+            // 判斷是否在繪圖：檢查食指是否伸直（指尖高於關節）
+            // 簡單判斷：Landmark 8 的 Y 軸座標小於 Landmark 6
+            if (hand[8].y < hand[6].y) {
+                if (isDrawing) {
+                    pg.line(prevX, prevY, x, y);
+                    // 這裡可以呼叫 AI 辨識函式
+                    debouncedPredict();
+                }
+                prevX = x;
+                prevY = y;
+                isDrawing = true;
+                
+                // 畫出目前的指尖指示點
+                fill(255, 0, 0);
+                noStroke();
+                ellipse(x, y, 15, 15);
+            } else {
+                isDrawing = false;
+            }
+
+            // 握拳清除偵測 (簡單逻辑：指尖都在掌心高度以下)
+            if (hand[8].y > hand[5].y && hand[12].y > hand[9].y) {
+                clearCanvas();
+            }
+        }
+
+        image(pg, 0, 0); // 將繪圖層渲染到畫面上
+    }
+
+    function clearCanvas() {
+        pg.clear();
+        document.getElementById('ai-guess').innerText = "等待繪圖...";
+    }
+
+    function windowResized() {
+        resizeCanvas(windowWidth, windowHeight);
+    }
+
+    // --- 3. AI 辨識介面 (Placeholder) ---
+    let lastPredictTime = 0;
+    function debouncedPredict() {
+        let now = millis();
+        if (now - lastPredictTime > 1000) { // 每秒辨識一次，避免效能崩潰
+            predictDrawing();
+            lastPredictTime = now;
+        }
+    }
+
+    async function predictDrawing() {
+        // 在這裡串接你的 AI 模型 (如 TensorFlow.js 或 Web API)
+        // 1. 將 pg 畫布轉換為 blob 或 tensor
+        // 2. model.predict()
+        const simulatedGuesses = ["貓", "房子", "圓圈", "蘋果", "星星"];
+        let randomGuess = simulatedGuesses[Math.floor(Math.random() * simulatedGuesses.length)];
+        document.getElementById('ai-guess').innerText = randomGuess + " ?";
+    }
+
+</script>
+</body>
+</html>
