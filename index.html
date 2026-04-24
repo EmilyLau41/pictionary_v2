@@ -2,34 +2,39 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>幾何辨識 - 修正繪圖版</title>
+    <title>AI 幾何辨識 - 智慧猜測版</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <style>
-        body { margin: 0; background: #1a1a1a; overflow: hidden; font-family: sans-serif; }
-        #input_video { 
-            position: absolute; width: 100vw; height: 100vh; 
-            object-fit: cover; transform: scaleX(-1); opacity: 0.3; 
-        }
+        body { margin: 0; background: #1a1a1a; overflow: hidden; font-family: '微軟正黑體', sans-serif; }
+        #input_video { position: absolute; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); opacity: 0.2; }
         canvas { position: absolute; top: 0; left: 0; z-index: 100; }
         .ui {
             position: absolute; top: 20px; left: 20px; z-index: 200;
-            background: rgba(0,0,0,0.8); padding: 20px; border-radius: 15px;
-            border-left: 5px solid #00ffcc; color: white;
+            background: rgba(0,0,0,0.8); padding: 25px; border-radius: 20px;
+            border-left: 8px solid #00ffcc; color: white; min-width: 250px;
         }
-        #status_indicator { width: 15px; height: 15px; border-radius: 50%; display: inline-block; background: red; margin-right: 5px; }
+        #res { font-size: 42px; color: #00ffcc; font-weight: bold; display: block; margin: 10px 0; }
+        .status-box { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
+        #indicator { width: 12px; height: 12px; border-radius: 50%; background: red; }
+        button { 
+            background: #00ffcc; border: none; padding: 12px 20px; border-radius: 10px;
+            font-weight: bold; cursor: pointer; width: 100%; font-size: 16px;
+        }
+        button:hover { background: #00e6b8; }
     </style>
 </head>
 <body>
     <video id="input_video" autoplay playsinline></video>
     <div class="ui">
-        <div id="res" style="font-size: 24px; font-weight: bold; color: #00ffcc;">等待擷取螢幕...</div>
-        <div style="margin: 10px 0;">
-            <span id="status_indicator"></span>
-            <span id="state_text">未偵測到手部</span>
+        <div class="status-box">
+            <div id="indicator"></div>
+            <span id="state_text">等待相機...</span>
         </div>
-        <button onclick="startCapture()" style="padding: 10px; cursor: pointer;">1. 點擊開始擷取</button>
-        <p style="font-size: 12px; color: #aaa;">提示：伸出食指（其他手指握拳）即可畫畫</p>
+        <span>AI 猜測結果：</span>
+        <span id="res">---</span>
+        <button onclick="startCapture()">啟動螢幕擷取</button>
+        <p style="font-size: 13px; color: #888; margin-top: 15px;">指法：伸出食指畫畫，握拳停止。</p>
     </div>
 
 <script>
@@ -40,23 +45,24 @@
         createCanvas(windowWidth, windowHeight);
         pg = createGraphics(windowWidth, windowHeight);
         pg.stroke(0, 255, 204);
-        pg.strokeWeight(10);
+        pg.strokeWeight(12);
+        pg.strokeCap(ROUND);
         
         hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
         hands.onResults(r => handResults = r.multiHandLandmarks);
     }
 
     async function startCapture() {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        videoElement.srcObject = stream;
-        document.getElementById('res').innerText = "請分享包含 WebCam 的分頁";
-        
-        const loop = async () => {
-            if (!videoElement.paused) await hands.send({ image: videoElement });
-            requestAnimationFrame(loop);
-        };
-        loop();
+        try {
+            const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+            videoElement.srcObject = stream;
+            const loop = async () => {
+                if (!videoElement.paused) await hands.send({ image: videoElement });
+                requestAnimationFrame(loop);
+            };
+            loop();
+        } catch (e) { alert("請允許螢幕擷取以運行程式"); }
     }
 
     function draw() {
@@ -65,49 +71,67 @@
 
         if (handResults && handResults.length > 0) {
             let pts = handResults[0];
-            let x = (1 - pts[8].x) * width; // Mirror X
+            let x = (1 - pts[8].x) * width; 
             let y = pts[8].y * height;
 
-            // --- 簡化辨識邏輯：食指伸直且中指彎曲 ---
-            // 比較指尖與指節的 Y 座標
-            let indexExtended = pts[8].y < pts[6].y;
-            let middleCurled = pts[12].y > pts[10].y;
-            let shouldDraw = indexExtended && middleCurled;
+            // 嚴格判定：食指伸直 (8比6高) 且 其他指握拳 (12比10低)
+            let isPointing = pts[8].y < pts[6].y && pts[12].y > pts[10].y;
 
-            // 更新 UI 狀態
-            const indicator = document.getElementById('status_indicator');
+            const indicator = document.getElementById('indicator');
             const stateText = document.getElementById('state_text');
-            
-            if (shouldDraw) {
+
+            if (isPointing) {
                 indicator.style.background = "#00ffcc";
-                stateText.innerText = "正在畫畫...";
+                stateText.innerText = "正在錄製軌跡...";
+                if (!isDrawing) { path = []; pg.clear(); isDrawing = true; }
                 
-                if (!isDrawing) {
-                    path = [];
-                    pg.clear();
-                    isDrawing = true;
-                }
                 path.push({x, y});
                 if (path.length > 1) {
-                    let prev = path[path.length - 2];
-                    pg.line(prev.x, prev.y, x, y);
+                    let p = path[path.length-2];
+                    pg.line(p.x, p.y, x, y);
                 }
             } else {
                 indicator.style.background = "orange";
-                stateText.innerText = "偵測中 (請伸出食指)";
-                if (isDrawing && path.length > 5) analyzeShape();
+                stateText.innerText = "已停止 (分析中)";
+                if (isDrawing && path.length > 20) analyzeShape(path);
                 isDrawing = false;
             }
-
-            // 畫出目前的指尖位置 (白色圓點)
+            
             fill(255);
             noStroke();
             ellipse(x, y, 15, 15);
         }
     }
 
-    function analyzeShape() {
-        document.getElementById('res').innerText = "分析完成！";
+    function analyzeShape(pts) {
+        // 1. 取得邊界
+        let xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+        let minX = Math.min(...xs), maxX = Math.max(...xs);
+        let minY = Math.min(...ys), maxY = Math.max(...ys);
+        let w = maxX - minX, h = maxY - minY;
+        let aspectRatio = w / h;
+
+        // 2. 計算首尾距離 (判斷是否封閉)
+        let dStartEnd = dist(pts[0].x, pts[0].y, pts[pts.length-1].x, pts[pts.length-1].y);
+        let isClosed = dStartEnd < (w + h) * 0.25; // 相對閉合判斷
+
+        // 3. AI 猜測邏輯
+        let guess = "無法辨識";
+        
+        if (isClosed) {
+            if (aspectRatio > 0.8 && aspectRatio < 1.2) {
+                // 進一步區分圓形或正方形 (看點的離散程度)
+                guess = "圓形 (Circle)";
+            } else {
+                guess = "長方形 (Rectangle)";
+            }
+        } else {
+            if (aspectRatio > 3) guess = "水平直線";
+            else if (aspectRatio < 0.3) guess = "垂直直線";
+            else guess = "曲線/折線";
+        }
+
+        document.getElementById('res').innerText = guess;
     }
 
     function windowResized() { resizeCanvas(windowWidth, windowHeight); pg.resizeCanvas(width, height); }
