@@ -2,184 +2,198 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>AI 幾何辨識 - 進階圖案版</title>
+    <title>AI 智慧幾何辨識 - $1 Recognizer 版</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <style>
         body { margin: 0; background: #121212; overflow: hidden; font-family: 'Segoe UI', '微軟正黑體', sans-serif; }
         #input_video { position: absolute; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); opacity: 0.15; }
         canvas { position: absolute; top: 0; left: 0; z-index: 100; }
-        .ui {
-            position: absolute; top: 20px; left: 20px; z-index: 200;
-            background: rgba(25, 25, 25, 0.9); padding: 25px; border-radius: 15px;
-            border: 1px solid rgba(0, 255, 204, 0.3); color: white; min-width: 280px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        }
-        #res { font-size: 36px; color: #00ffcc; font-weight: 800; display: block; margin: 10px 0; text-shadow: 0 0 10px rgba(0,255,204,0.5); }
+        .ui { position: absolute; top: 20px; left: 20px; z-index: 200; background: rgba(25, 25, 25, 0.9); padding: 25px; border-radius: 15px; border: 1px solid rgba(0, 255, 204, 0.3); color: white; min-width: 280px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5); }
+        #res { font-size: 32px; color: #00ffcc; font-weight: 800; display: block; margin: 10px 0; text-shadow: 0 0 10px rgba(0, 255, 204, 0.5); }
         .status-box { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; font-size: 14px; }
         #indicator { width: 12px; height: 12px; border-radius: 50%; background: #ff4444; box-shadow: 0 0 8px #ff4444; }
-        button { 
-            background: linear-gradient(135deg, #00ffcc, #00aba9); border: none; padding: 12px; border-radius: 8px;
-            font-weight: bold; cursor: pointer; width: 100%; font-size: 16px; transition: 0.3s; color: #121212;
-        }
-        button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,255,204,0.4); }
+        button { background: linear-gradient(135deg, #00ffcc, #00aba9); border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; font-size: 16px; transition: 0.3s; color: #121212; margin-bottom: 10px; }
+        button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0, 255, 204, 0.4); }
         .hint { font-size: 12px; color: #aaa; margin-top: 15px; line-height: 1.6; }
     </style>
 </head>
 <body>
-    <video id="input_video" autoplay playsinline></video>
+    <img id="input_video" autoplay playsinline></img>
     <div class="ui">
         <div class="status-box">
             <div id="indicator"></div>
-            <span id="state_text">等待相機權限...</span>
+            <span id="state_text">等待相機...</span>
         </div>
         <span>辨識結果：</span>
         <span id="res">---</span>
-        <button onclick="startCapture()">啟動螢幕 / 相機擷取</button>
+        <button onclick="startCapture()">啟動影像源</button>
         <div class="hint">
-            • <b>繪製：</b>伸出食指 (其他手指握拳)<br>
-            • <b>停止/辨識：</b>收回食指 (握拳)<br>
-            • <b>支援：</b>圓形、正方形、三角形、愛心、星星
+            • <b>繪製：</b>伸出食指 (其餘握拳)<br>
+            • <b>辨識：</b>收回食指<br>
+            • <b>技術：</b>$1 Unistroke 模板比對
         </div>
     </div>
 
-<script>
-    let hands, pg, path = [], handResults = null, isDrawing = false;
-    const videoElement = document.getElementById('input_video');
-
-    function setup() {
-        createCanvas(windowWidth, windowHeight);
-        pg = createGraphics(windowWidth, windowHeight);
-        pg.stroke(0, 255, 204);
-        pg.strokeWeight(8);
-        pg.strokeCap(ROUND);
-        pg.strokeJoin(ROUND);
-        
-        hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
-        hands.onResults(r => handResults = r.multiHandLandmarks);
-    }
-
-    async function startCapture() {
-        try {
-            // 優先嘗試使用攝影機，若想用螢幕分享可換回 getDisplayMedia
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
-            videoElement.srcObject = stream;
-            const loop = async () => {
-                if (!videoElement.paused) await hands.send({ image: videoElement });
-                requestAnimationFrame(loop);
-            };
-            loop();
-        } catch (e) { alert("無法取得影像，請確保攝影機權限已開啟"); }
-    }
-
-    function draw() {
-        clear();
-        // 繪製背景軌跡
-        image(pg, 0, 0);
-
-        if (handResults && handResults.length > 0) {
-            let pts = handResults[0];
-            let x = (1 - pts[8].x) * width; 
-            let y = pts[8].y * height;
-
-            // 判別手勢：食指伸直 (8 < 6)，中指/無名指收起 (12 > 10, 16 > 14)
-            let isPointing = pts[8].y < pts[6].y && pts[12].y > pts[10].y;
-
-            const indicator = document.getElementById('indicator');
-            const stateText = document.getElementById('state_text');
-
-            if (isPointing) {
-                indicator.style.background = "#00ffcc";
-                indicator.style.boxShadow = "0 0 10px #00ffcc";
-                stateText.innerText = "正在錄製軌跡...";
-                
-                if (!isDrawing) { path = []; pg.clear(); isDrawing = true; }
-                
-                // 平滑化處理
-                if (path.length > 0) {
-                    let lastP = path[path.length - 1];
-                    x = lerp(lastP.x, x, 0.4);
-                    y = lerp(lastP.y, y, 0.4);
-                }
-
-                path.push({x, y});
-                if (path.length > 1) {
-                    let p = path[path.length-2];
-                    pg.line(p.x, p.y, x, y);
-                }
-            } else {
-                indicator.style.background = "orange";
-                indicator.style.boxShadow = "0 0 10px orange";
-                stateText.innerText = "準備就緒";
-                
-                if (isDrawing && path.length > 15) {
-                    analyzeShape(path);
-                }
-                isDrawing = false;
+    <script>
+        // --- $1 Recognizer 核心實作 ---
+        class DollarRecognizer {
+            constructor() {
+                this.templates = [];
             }
+            addTemplate(name, points) {
+                this.templates.push({ name, points: this.preprocess(points) });
+            }
+            preprocess(points) {
+                points = this.resample(points, 64);
+                points = this.rotateToZero(points);
+                points = this.scaleTo(points, 250);
+                points = this.translateToOrigin(points);
+                return points;
+            }
+            recognize(points) {
+                if (points.length < 10) return { name: "太短了", score: 0 };
+                let p = this.preprocess(points);
+                let bestDist = Infinity, bestIdx = -1;
+                for (let i = 0; i < this.templates.length; i++) {
+                    let d = this.pathDistance(p, this.templates[i].points);
+                    if (d < bestDist) { bestDist = d; bestIdx = i; }
+                }
+                let score = 1.0 - (bestDist / (0.5 * Math.sqrt(250*250 + 250*250)));
+                return bestIdx === -1 ? { name: "未知", score: 0 } : { name: this.templates[bestIdx].name, score };
+            }
+            resample(points, n) {
+                let I = this.pathLength(points) / (n - 1), D = 0, newPoints = [points[0]];
+                for (let i = 1; i < points.length; i++) {
+                    let d = dist(points[i-1].x, points[i-1].y, points[i].x, points[i].y);
+                    if (D + d >= I) {
+                        let qx = points[i-1].x + ((I - D) / d) * (points[i].x - points[i-1].x);
+                        let qy = points[i-1].y + ((I - D) / d) * (points[i].y - points[i-1].y);
+                        newPoints.push({x: qx, y: qy});
+                        points.splice(i, 0, {x: qx, y: qy});
+                        D = 0;
+                    } else D += d;
+                }
+                if (newPoints.length === n - 1) newPoints.push(points[points.length - 1]);
+                return newPoints;
+            }
+            rotateToZero(points) {
+                let c = this.centroid(points);
+                let theta = Math.atan2(c.y - points[0].y, c.x - points[0].x);
+                return this.rotateBy(points, -theta);
+            }
+            scaleTo(points, size) {
+                let b = this.boundingBox(points);
+                return points.map(p => ({ x: p.x * (size / b.width), y: p.y * (size / b.height) }));
+            }
+            translateToOrigin(points) {
+                let c = this.centroid(points);
+                return points.map(p => ({ x: p.x - c.x, y: p.y - c.y }));
+            }
+            centroid(pts) {
+                let x = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+                let y = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+                return { x, y };
+            }
+            boundingBox(pts) {
+                let minX = Math.min(...pts.map(p => p.x)), maxX = Math.max(...pts.map(p => p.x));
+                let minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y));
+                return { width: maxX - minX, height: maxY - minY };
+            }
+            pathDistance(pts1, pts2) {
+                let d = 0;
+                for (let i = 0; i < pts1.length; i++) d += dist(pts1[i].x, pts1[i].y, pts2[i].x, pts2[i].y);
+                return d / pts1.length;
+            }
+            pathLength(pts) {
+                let d = 0;
+                for (let i = 1; i < pts.length; i++) d += dist(pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y);
+                return d;
+            }
+            rotateBy(pts, ang) {
+                let cos = Math.cos(ang), sin = Math.sin(ang), c = this.centroid(pts);
+                return pts.map(p => ({
+                    x: (p.x - c.x) * cos - (p.y - c.y) * sin + c.x,
+                    y: (p.x - c.x) * sin + (p.y - c.y) * cos + c.y
+                }));
+            }
+        }
+
+        // --- 主程式邏輯 ---
+        let hands, pg, path = [], handResults = null, isDrawing = false, recognizer;
+        const imgElement = document.getElementById('input_video');
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            pg = createGraphics(windowWidth, windowHeight);
+            pg.stroke(0, 255, 204); pg.strokeWeight(8);
             
-            // 繪製指尖游標
-            fill(255);
-            noStroke();
-            ellipse(x, y, 12, 12);
-            noFill();
-            stroke(0, 255, 204);
-            ellipse(x, y, 20, 20);
-        }
-    }
+            recognizer = new DollarRecognizer();
+            // 這裡可以預載模板，或讓使用者自行定義
+            loadDefaultTemplates();
 
-    function analyzeShape(pts) {
-        let xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-        let minX = Math.min(...xs), maxX = Math.max(...xs);
-        let minY = Math.min(...ys), maxY = Math.max(...ys);
-        let w = maxX - minX, h = maxY - minY;
-        let centerX = (minX + maxX) / 2, centerY = (minY + maxY) / 2;
-        let aspectRatio = w / h;
-
-        // 核心特徵計算
-        let radii = pts.map(p => dist(p.x, p.y, centerX, centerY));
-        let avgRadius = radii.reduce((a, b) => a + b) / radii.length;
-        let stdDev = Math.sqrt(radii.reduce((a, b) => a + Math.pow(b - avgRadius, 2), 0) / radii.length);
-        let closedness = dist(pts[0].x, pts[0].y, pts[pts.length-1].x, pts[pts.length-1].y);
-        
-        // 轉角偵測 (用於辨識星星/三角形)
-        let corners = 0;
-        for (let i = 2; i < pts.length - 2; i += 2) {
-            let v1 = createVector(pts[i].x - pts[i-2].x, pts[i].y - pts[i-2].y);
-            let v2 = createVector(pts[i+2].x - pts[i].x, pts[i+2].y - pts[i].y);
-            if (v1.angleBetween(v2) > 0.8) corners++; 
+            hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+            hands.onResults(r => handResults = r.multiHandLandmarks);
         }
 
-        let guess = "🤔 曲線";
-
-        // 辨識邏輯分支
-        if (stdDev / avgRadius < 0.18) {
-            guess = "⚪ 圓形 (Circle)";
-        } else if (aspectRatio > 0.7 && aspectRatio < 1.3 && corners >= 4 && corners <= 6) {
-            guess = "⭐ 五角星 (Star)";
-        } else if (corners >= 2 && corners <= 4 && aspectRatio > 0.8) {
-            guess = "🔺 三角形 (Triangle)";
-        } else if (aspectRatio > 0.8 && aspectRatio < 1.2) {
-            guess = "⬜ 正方形 (Square)";
-        } else if (w > h * 2 || h > w * 2) {
-            guess = "📏 直線 (Line)";
-        } else if (pts.some(p => p.y > centerY + h*0.2) && aspectRatio > 1) {
-            // 愛心特徵：底部尖銳，寬度大於高度
-            guess = "❤️ 愛心 (Heart)";
-        } else {
-            guess = "📦 矩形 (Rectangle)";
+        async function startCapture() {
+            imgElement.crossOrigin = "anonymous";
+            imgElement.src = "http://localhost:3000/video_feed"; // 串接你的影像源
+            imgElement.onload = () => {
+                const loop = async () => {
+                    if (!imgElement.paused) await hands.send({ image: imgElement });
+                    requestAnimationFrame(loop);
+                };
+                loop();
+            };
         }
 
-        document.getElementById('res').innerText = guess;
-    }
+        function draw() {
+            clear();
+            image(pg, 0, 0);
+            if (handResults && handResults.length > 0) {
+                let pts = handResults[0];
+                let x = (1 - pts[8].x) * width;
+                let y = pts[8].y * height;
+                let isPointing = pts[8].y < pts[6].y && pts[12].y > pts[10].y;
 
-    function windowResized() { 
-        resizeCanvas(windowWidth, windowHeight); 
-        let newPg = createGraphics(windowWidth, windowHeight);
-        newPg.image(pg, 0, 0);
-        pg = newPg;
-    }
-</script>
+                const indicator = document.getElementById('indicator');
+                if (isPointing) {
+                    indicator.style.background = "#00ffcc";
+                    if (!isDrawing) { path = []; pg.clear(); isDrawing = true; }
+                    path.push({ x, y });
+                    if (path.length > 1) {
+                        let p = path[path.length - 2];
+                        pg.line(p.x, p.y, x, y);
+                    }
+                } else {
+                    indicator.style.background = "orange";
+                    if (isDrawing && path.length > 10) analyzeShape(path);
+                    isDrawing = false;
+                }
+                fill(255); ellipse(x, y, 12, 12);
+            }
+        }
+
+        function analyzeShape(pts) {
+            let res = recognizer.recognize(pts);
+            if (res.score > 0.65) {
+                document.getElementById('res').innerText = `${res.name} (${Math.round(res.score*100)}%)`;
+            } else {
+                document.getElementById('res').innerText = "🤔 辨識不清";
+            }
+        }
+
+        function loadDefaultTemplates() {
+            // 範例：手動加入一個圓形的 8 個點位作為簡易模板
+            recognizer.addTemplate("⚪ 圓形", [{x:127,y:73},{x:214,y:105},{x:232,y:197},{x:175,y:268},{x:78,y:268},{x:21,y:197},{x:39,y:105},{x:127,y:73}]);
+            recognizer.addTemplate("🔺 三角形", [{x:150,y:50},{x:250,y:250},{x:50,y:250},{x:150,y:50}]);
+            recognizer.addTemplate("⬜ 正方形", [{x:50,y:50},{x:250,y:50},{x:250,y:250},{x:50,y:250},{x:50,y:50}]);
+            // 你可以透過 recognizer.addTemplate 繼續擴充星星、愛心等模板
+        }
+
+        function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+    </script>
 </body>
 </html>
