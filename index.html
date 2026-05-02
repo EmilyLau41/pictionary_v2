@@ -107,9 +107,9 @@
         <span id="res">---</span>
         <button onclick="startCapture()">啟動螢幕 / 相機擷取</button>
         <div class="hint">
-            • <b>繪製：</b>伸出食指 (其他手指握拳)<br>
-            • <b>停止/辨識：</b>收回食指 (握拳)<br>
-            • <b>支援：</b>圓形、正方形、三角形、愛心、星星
+            • <b>繪製：</b>伸出食指 (其他手指收起)<br>
+            • <b>停止/辨識：</b>張開手掌 (五指伸展)<br>
+            • <b>支援：</b>直線、圓形、正方形、三角形
         </div>
     </div>
 
@@ -126,7 +126,7 @@
             pg.strokeJoin(ROUND);
 
             hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.7 });
             hands.onResults(r => handResults = r.multiHandLandmarks);
         }
 
@@ -148,7 +148,6 @@
 
         function draw() {
             clear();
-            // 繪製背景軌跡
             image(pg, 0, 0);
 
             if (handResults && handResults.length > 0) {
@@ -156,24 +155,37 @@
                 let x = (1 - pts[8].x) * width;
                 let y = pts[8].y * height;
 
-                // 判別手勢：食指伸直 (8 < 6)，中指/無名指收起 (12 > 10, 16 > 14)
+                // --- 核心修改：手勢判斷邏輯 ---
+                
+                // 1. 食指伸直 (繪製模式)：食指尖(8) 高於 食指根(6)，且中指尖(12) 低於 中指根(10) [代表只有食指伸出]
                 let isPointing = pts[8].y < pts[6].y && pts[12].y > pts[10].y;
+
+                // 2. 五指伸開 (停止/辨識模式)：大拇指到小拇指的尖端都處於伸展狀態
+                // 簡化判斷：食指(8)、中指(12)、無名指(16)、小指(20) 的 y 座標都小於其對應的第二關節
+                let isFiveFingers = pts[8].y < pts[6].y && 
+                                    pts[12].y < pts[10].y && 
+                                    pts[16].y < pts[14].y && 
+                                    pts[20].y < pts[18].y;
 
                 const indicator = document.getElementById('indicator');
                 const stateText = document.getElementById('state_text');
 
                 if (isPointing) {
+                    // 進入繪製狀態
                     indicator.style.background = "#00ffcc";
                     indicator.style.boxShadow = "0 0 10px #00ffcc";
                     stateText.innerText = "正在錄製軌跡...";
 
-                    if (!isDrawing) { path = []; pg.clear(); isDrawing = true; }
+                    if (!isDrawing) { 
+                        path = []; 
+                        pg.clear(); 
+                        isDrawing = true; 
+                    }
 
-                    // 平滑化處理
                     if (path.length > 0) {
                         let lastP = path[path.length - 1];
-                        x = lerp(lastP.x, x, 0.4);
-                        y = lerp(lastP.y, y, 0.4);
+                        x = lerp(lastP.x, x, 0.2);
+                        y = lerp(lastP.y, y, 0.2);
                     }
 
                     path.push({ x, y });
@@ -181,15 +193,24 @@
                         let p = path[path.length - 2];
                         pg.line(p.x, p.y, x, y);
                     }
-                } else {
-                    indicator.style.background = "orange";
-                    indicator.style.boxShadow = "0 0 10px orange";
-                    stateText.innerText = "準備就緒";
+                } 
+                else if (isFiveFingers) {
+                    // 偵測到五指伸出：觸發辨識並停止繪製
+                    indicator.style.background = "#ff4444";
+                    indicator.style.boxShadow = "0 0 10px #ff4444";
+                    stateText.innerText = "偵測到辨識手勢！";
 
                     if (isDrawing && path.length > 15) {
                         analyzeShape(path);
                     }
                     isDrawing = false;
+                }
+                else {
+                    // 其他手勢 (如握拳)：靜止狀態
+                    indicator.style.background = "orange";
+                    indicator.style.boxShadow = "0 0 10px orange";
+                    stateText.innerText = "等待指令 (食指繪製 / 五指辨識)";
+                    isDrawing = false; 
                 }
 
                 // 繪製指尖游標
@@ -241,6 +262,26 @@
     } else {
         guess = "🎨 自由曲線";
     }
+    // 在 analyzeShape(pts) 中加入
+let maxYIndex = ys.indexOf(maxY);
+let peakPoint = pts[ys.indexOf(minY)]; // 最高點
+let bottomPoint = pts[ys.indexOf(maxY)]; // 最低點
+
+// 三角形判定邏輯 (簡單版)
+// 底部寬度與頂點位置的關係
+if (isClosed && varCoeff > 0.2) {
+    // 如果最高點靠近中心，且左右底角分得很開，可能為三角形
+    if (Math.abs(peakPoint.x - centerX) < w * 0.2) {
+        guess = "🔺 三角形 (Triangle)";
+    }
+}
+
+// 愛心判定邏輯
+// 愛心通常上方有兩個波峰 (凹陷)，下方有一個尖角
+if (isClosed && aspectRatio < 1.2) {
+    // 檢查路徑上半部是否存在凹陷
+    // ... 進階數學邏輯 ...
+}
 
     document.getElementById('res').innerText = guess;
 }
