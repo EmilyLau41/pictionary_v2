@@ -109,7 +109,7 @@
         <div class="hint">
             • <b>繪製：</b>伸出食指 (其他手指收起)<br>
             • <b>停止/辨識：</b>張開手掌 (五指伸展)<br>
-            • <b>支援：</b>直線、圓形、正方形、三角形
+            • <b>支援：</b>直線、圓形、正方形、三角形、愛心
         </div>
     </div>
 
@@ -223,60 +223,68 @@
             }
         }
         function analyzeShape(pts) {
-    if (pts.length < 10) return;
+    if (pts.length < 15) return;
 
     let xs = pts.map(p => p.x), ys = pts.map(p => p.y);
     let minX = Math.min(...xs), maxX = Math.max(...xs);
     let minY = Math.min(...ys), maxY = Math.max(...ys);
     let w = maxX - minX, h = maxY - minY;
-    let centerX = (minX + maxX) / 2, centerY = (minY + maxY) / 2;
+    let centerX = (minX + maxX) / 2;
+    let centerY = (minY + maxY) / 2;
 
-    // 1. 計算閉合度
+    // 1. 基礎長度與閉合度
     let pathLength = 0;
     for (let i = 1; i < pts.length; i++) pathLength += dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
     let closedness = dist(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y);
     let isClosed = closedness < (pathLength * 0.3);
 
-    // 2. 圓形檢測：計算半徑的一致性 (變異係數)
+    // 2. 圓形判定基礎 (半徑變異係數)
     let radii = pts.map(p => dist(p.x, p.y, centerX, centerY));
     let avgRadius = radii.reduce((a, b) => a + b) / radii.length;
     let varCoeff = Math.sqrt(radii.reduce((a, b) => a + Math.pow(b - avgRadius, 2), 0) / radii.length) / avgRadius;
 
-    // 3. 轉角檢測 (用於區分多邊形與圓形)
-    let totalRotation = 0;
-    for (let i = 1; i < pts.length - 1; i++) {
-        let v1 = createVector(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-        let v2 = createVector(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
-        totalRotation += v1.angleBetween(v2);
-    }
-
     let guess = "🎨 自由曲線";
-    let aspectRatio = w / h;
 
-    // --- 判斷邏輯 ---
-    if (!isClosed && (aspectRatio > 4 || aspectRatio < 0.25)) {
-        guess = "📏 直線 (Line)";
-    } 
-    else if (isClosed) {
-        if (varCoeff < 0.12) {
+    if (isClosed) {
+        // --- A. 愛心檢查 (中心上方凹陷) ---
+        let midTopPoints = pts.filter(p => Math.abs(p.x - centerX) < w * 0.15 && p.y < centerY);
+        let midDripY = midTopPoints.length > 0 ? Math.min(...midTopPoints.map(p => p.y)) : minY;
+        let hasHeartCleft = (midDripY > minY + (h * 0.12));
+
+        // --- B. 三角形檢查 (重心與頂點分布) ---
+        // 尋找最高點的位置
+        let topIndex = ys.indexOf(minY);
+        let topPoint = pts[topIndex];
+        // 檢查最高點是否大致在水平中央
+        let isTopMid = Math.abs(topPoint.x - centerX) < w * 0.2;
+        // 檢查底部寬度 (底部兩點是否分得很開)
+        let bottomPoints = pts.filter(p => p.y > maxY - (h * 0.2));
+        let bottomWidth = bottomPoints.length > 0 ? (Math.max(...bottomPoints.map(p => p.x)) - Math.min(...bottomPoints.map(p => p.x))) : 0;
+
+        // --- C. 最終決策樹 ---
+        if (hasHeartCleft && varCoeff > 0.15) {
+            guess = "❤️ 愛心 (Heart)";
+        } 
+        else if (varCoeff < 0.16) { 
+            // 變異係數很小，代表點到中心的距離很平均 -> 圓形
             guess = "⚪ 圓形 (Circle)";
-        } else if (aspectRatio > 0.8 && aspectRatio < 1.25) {
-            // 轉角總和判斷：三角形在快速繪製時點較少，轉角會比較跳躍
-            if (varCoeff > 0.25) {
-                guess = "🔺 三角形 (Triangle)";
-            } else {
-                guess = "⬜ 正方形 (Square)";
-            }
-        } else {
-            guess = "📦 矩形 (Rectangle)";
+        } 
+        else if (isTopMid && bottomWidth > w * 0.7 && varCoeff > 0.2) {
+            // 如果有明顯的頂點在中間，底部很寬，且半徑變化大 -> 三角形
+            guess = "🔺 三角形 (Triangle)";
         }
-    }
-
-    // 額外判定：愛心 (通常下方有一個明顯的極值點且上方凹陷)
-    let bottomPointY = Math.max(...ys);
-    let topMidY = pts.find(p => Math.abs(p.x - centerX) < w * 0.1)?.y;
-    if (isClosed && topMidY > minY + (h * 0.2)) {
-        guess = "❤️ 愛心 (Heart)";
+        else {
+            // 剩下的情況根據長寬比判定
+            let aspectRatio = w / h;
+            if (aspectRatio > 0.8 && aspectRatio < 1.25) {
+                guess = "⬜ 正方形 (Square)";
+            } else {
+                guess = "📦 矩形 (Rectangle)";
+            }
+        }
+    } else {
+        // 非閉合曲線判定為直線
+        if (w / h > 4 || h / w > 4) guess = "📏 直線 (Line)";
     }
 
     document.getElementById('res').innerText = guess;
