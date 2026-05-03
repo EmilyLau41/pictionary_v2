@@ -222,66 +222,62 @@
                 ellipse(x, y, 20, 20);
             }
         }
-            function analyzeShape(pts) {
+        function analyzeShape(pts) {
+    if (pts.length < 10) return;
+
     let xs = pts.map(p => p.x), ys = pts.map(p => p.y);
     let minX = Math.min(...xs), maxX = Math.max(...xs);
     let minY = Math.min(...ys), maxY = Math.max(...ys);
     let w = maxX - minX, h = maxY - minY;
-    let aspectRatio = w / h;
-    
-    // 計算路徑長度與閉合度
-    let pathLength = 0;
-    for(let i=1; i<pts.length; i++) pathLength += dist(pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y);
-    let closedness = dist(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y);
-    let isClosed = closedness < (pathLength * 0.25); // 起終點距離小於總長 25%
-
-    // 圓形判斷：計算點到中心的平均距離標準差
     let centerX = (minX + maxX) / 2, centerY = (minY + maxY) / 2;
+
+    // 1. 計算閉合度
+    let pathLength = 0;
+    for (let i = 1; i < pts.length; i++) pathLength += dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+    let closedness = dist(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y);
+    let isClosed = closedness < (pathLength * 0.3);
+
+    // 2. 圓形檢測：計算半徑的一致性 (變異係數)
     let radii = pts.map(p => dist(p.x, p.y, centerX, centerY));
     let avgRadius = radii.reduce((a, b) => a + b) / radii.length;
-    let stdDev = Math.sqrt(radii.reduce((a, b) => a + Math.pow(b - avgRadius, 2), 0) / radii.length);
-    let varCoeff = stdDev / avgRadius;
+    let varCoeff = Math.sqrt(radii.reduce((a, b) => a + Math.pow(b - avgRadius, 2), 0) / radii.length) / avgRadius;
 
-    let guess = "🤔 辨識中...";
+    // 3. 轉角檢測 (用於區分多邊形與圓形)
+    let totalRotation = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+        let v1 = createVector(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        let v2 = createVector(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+        totalRotation += v1.angleBetween(v2);
+    }
 
-    // --- 強化版判定邏輯 ---
-    if (!isClosed && aspectRatio > 3.0) {
+    let guess = "🎨 自由曲線";
+    let aspectRatio = w / h;
+
+    // --- 判斷邏輯 ---
+    if (!isClosed && (aspectRatio > 4 || aspectRatio < 0.25)) {
         guess = "📏 直線 (Line)";
-    } else if (varCoeff < 0.16 && isClosed) {
-        guess = "⚪ 圓形 (Circle)";
-    } else if (aspectRatio > 0.7 && aspectRatio < 1.4) {
-        // 在長寬比接近 1:1 的情況下
-        // 如果變異係數較大（代表不是圓形），且有一定的閉合度，就傾向判定為正方形
-        if (varCoeff > 0.18) {
-            guess = "⬜ 正方形 (Square)";
-        } else {
+    } 
+    else if (isClosed) {
+        if (varCoeff < 0.12) {
             guess = "⚪ 圓形 (Circle)";
+        } else if (aspectRatio > 0.8 && aspectRatio < 1.25) {
+            // 轉角總和判斷：三角形在快速繪製時點較少，轉角會比較跳躍
+            if (varCoeff > 0.25) {
+                guess = "🔺 三角形 (Triangle)";
+            } else {
+                guess = "⬜ 正方形 (Square)";
+            }
+        } else {
+            guess = "📦 矩形 (Rectangle)";
         }
-    } else if (aspectRatio > 0.5 && aspectRatio < 2.0) {
-        guess = "📦 矩形 (Rectangle)";
-    } else {
-        guess = "🎨 自由曲線";
     }
-    // 在 analyzeShape(pts) 中加入
-let maxYIndex = ys.indexOf(maxY);
-let peakPoint = pts[ys.indexOf(minY)]; // 最高點
-let bottomPoint = pts[ys.indexOf(maxY)]; // 最低點
 
-// 三角形判定邏輯 (簡單版)
-// 底部寬度與頂點位置的關係
-if (isClosed && varCoeff > 0.2) {
-    // 如果最高點靠近中心，且左右底角分得很開，可能為三角形
-    if (Math.abs(peakPoint.x - centerX) < w * 0.2) {
-        guess = "🔺 三角形 (Triangle)";
+    // 額外判定：愛心 (通常下方有一個明顯的極值點且上方凹陷)
+    let bottomPointY = Math.max(...ys);
+    let topMidY = pts.find(p => Math.abs(p.x - centerX) < w * 0.1)?.y;
+    if (isClosed && topMidY > minY + (h * 0.2)) {
+        guess = "❤️ 愛心 (Heart)";
     }
-}
-
-// 愛心判定邏輯
-// 愛心通常上方有兩個波峰 (凹陷)，下方有一個尖角
-if (isClosed && aspectRatio < 1.2) {
-    // 檢查路徑上半部是否存在凹陷
-    // ... 進階數學邏輯 ...
-}
 
     document.getElementById('res').innerText = guess;
 }
