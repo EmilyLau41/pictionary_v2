@@ -53,6 +53,23 @@
             text-shadow: 0 0 10px rgba(0, 255, 204, 0.5);
         }
 
+        #confidence {
+            display: block;
+            color: #8ce6ff;
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        #explanation {
+            color: #cfd8dc;
+            font-size: 13px;
+            line-height: 1.5;
+            min-height: 20px;
+            max-width: 320px;
+            word-break: break-word;
+        }
+
         .status-box {
             display: flex;
             align-items: center;
@@ -93,6 +110,20 @@
             margin-top: 15px;
             line-height: 1.6;
         }
+
+        @media (max-width: 700px) {
+            .ui {
+                left: 10px;
+                right: 10px;
+                min-width: auto;
+                width: calc(100% - 20px);
+                padding: 16px;
+            }
+
+            #res {
+                font-size: 28px;
+            }
+        }
     </style>
 </head>
 
@@ -105,6 +136,8 @@
         </div>
         <span>辨識結果：</span>
         <span id="res">---</span>
+        <span id="confidence">信心度：--%</span>
+        <div id="explanation">判斷依據：---</div>
         <button onclick="startCapture()">啟動螢幕 / 相機擷取</button>
         <div class="hint">
             • <b>繪製：</b>伸出食指 (其他手指收起)<br>
@@ -114,7 +147,7 @@
     </div>
 
     <script>
-        let hands, pg, path = [], handResults = null, isDrawing = false;
+        let hands, pg, path = [], handResults = null, isDrawing = false, hasAnalyzedCurrentPath = false;
         const imgElement = document.getElementById('input_video');
 
         function setup() {
@@ -179,7 +212,8 @@
                     if (!isDrawing) { 
                         path = []; 
                         pg.clear(); 
-                        isDrawing = true; 
+                        isDrawing = true;
+                        hasAnalyzedCurrentPath = false;
                     }
 
                     if (path.length > 0) {
@@ -200,8 +234,9 @@
                     indicator.style.boxShadow = "0 0 10px #ff4444";
                     stateText.innerText = "偵測到辨識手勢！";
 
-                    if (isDrawing && path.length > 15) {
+                    if (isDrawing && path.length > 20 && !hasAnalyzedCurrentPath) {
                         analyzeShape(path);
+                        hasAnalyzedCurrentPath = true;
                     }
                     isDrawing = false;
                 }
@@ -222,78 +257,308 @@
                 ellipse(x, y, 20, 20);
             }
         }
-        function analyzeShape(pts) {
-    if (pts.length < 20) return; // 增加點數門檻確保資料量充足
-
-    let xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-    let minX = Math.min(...xs), maxX = Math.max(...xs);
-    let minY = Math.min(...ys), maxY = Math.max(...ys);
-    let w = maxX - minX, h = maxY - minY;
-    let centerX = (minX + maxX) / 2;
-    let centerY = (minY + maxY) / 2;
-
-    // --- 1. 計算閉合度與路徑平滑 ---
-    let pathLength = 0;
-    for (let i = 1; i < pts.length; i++) pathLength += dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
-    let isClosed = dist(pts[0].x, pts[0].y, pts[pts.length-1].x, pts[pts.length-1].y) < (pathLength * 0.35);
-
-    // --- 2. 圓形基礎指標 (變異係數) ---
-    let radii = pts.map(p => dist(p.x, p.y, centerX, centerY));
-    let avgRadius = radii.reduce((a, b) => a + b) / radii.length;
-    let varCoeff = Math.sqrt(radii.reduce((a, b) => a + Math.pow(b - avgRadius, 2), 0) / radii.length) / avgRadius;
-
-    let guess = "🎨 自由曲線";
-
-    if (isClosed) {
-        // --- 3. 深度特徵提取 (專攻愛心) ---
-        // 抓取上方 30% 區域的點
-        let topPoints = pts.filter(p => p.y < minY + h * 0.3);
-        
-        // 分別找出 左側高峰、中心凹陷、右側高峰
-        let leftLobe = topPoints.filter(p => p.x < centerX - w * 0.1);
-        let rightLobe = topPoints.filter(p => p.x > centerX + w * 0.1);
-        let centerCleft = topPoints.filter(p => Math.abs(p.x - centerX) < w * 0.1);
-
-        let lobeY = minY; // 預設最高點
-        if (leftLobe.length > 0 && rightLobe.length > 0) {
-            lobeY = (Math.min(...leftLobe.map(p => p.y)) + Math.min(...rightLobe.map(p => p.y))) / 2;
-        }
-        
-        let cleftY = centerCleft.length > 0 ? Math.min(...centerCleft.map(p => p.y)) : minY;
-
-        // 計算 V 字型特徵：cleftY 越「大」代表越往下凹
-        // 愛心判定條件：凹陷深度 > 總高度的 7% 且 變異係數較大
-        let heartScore = cleftY - lobeY;
-        let isHeart = heartScore > (h * 0.07);
-
-        // --- 4. 決策優先級 ---
-        if (isHeart) {
-            guess = "❤️ 愛心 (Heart)";
-        } 
-        else if (varCoeff < 0.15) { 
-            // 圓形判定：如果沒凹陷且半徑很平均
-            guess = "⚪ 圓形 (Circle)";
-        } 
-        else {
-            // --- 5. 其他形狀 (三角形/方形) ---
-            let topIndex = ys.indexOf(minY);
-            let isTopMid = Math.abs(pts[topIndex].x - centerX) < w * 0.15;
-            let bottomPoints = pts.filter(p => p.y > maxY - h * 0.15);
-            let bottomW = bottomPoints.length > 0 ? (Math.max(...bottomPoints.map(p => p.x)) - Math.min(...bottomPoints.map(p => p.x))) : 0;
-
-            if (isTopMid && bottomW > w * 0.7) {
-                guess = "🔺 三角形 (Triangle)";
-            } else if (w/h > 0.7 && w/h < 1.3) {
-                guess = "⬜ 正方形 (Square)";
-            } else {
-                guess = "📦 矩形 (Rectangle)";
+        function analyzeShape(rawPoints) {
+            if (!rawPoints || rawPoints.length < 20) {
+                showPrediction("⚠️ 圖案太短", 0, ["點數不足，請畫完整軌跡"]);
+                return;
             }
+
+            const pts = smoothPoints(rawPoints, 2);
+            const xs = pts.map(p => p.x);
+            const ys = pts.map(p => p.y);
+
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            const minY = Math.min(...ys);
+            const maxY = Math.max(...ys);
+            const width = maxX - minX;
+            const height = maxY - minY;
+            const diagonal = Math.hypot(width, height);
+
+            if (diagonal < 25) {
+                showPrediction("⚠️ 圖案太小", 5, ["尺寸過小，特徵不穩定"]);
+                return;
+            }
+
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const pathLength = getPathLength(pts);
+            const closingDistance = distance(pts[0], pts[pts.length - 1]);
+            const closureRatio = 1 - Math.min(1, closingDistance / Math.max(1, diagonal * 0.3));
+
+            const isClosed = closingDistance < Math.max(35, diagonal * 0.22) && pathLength > diagonal * 1.5;
+
+            const lineError = maxDistanceFromLine(pts, pts[0], pts[pts.length - 1]);
+            const lineErrorRatio = lineError / Math.max(1, diagonal);
+            const straightness = clamp(1 - lineErrorRatio * 4, 0, 1);
+            const pathVsDiagonal = pathLength / Math.max(1, diagonal);
+
+            if (!isClosed && lineError < Math.max(18, diagonal * 0.12) && pathVsDiagonal < 1.35) {
+                const confidence = 60 + 30 * straightness + 10 * clamp(1.35 - pathVsDiagonal, 0, 0.35) / 0.35;
+                showPrediction("📏 直線 (Line)", confidence, [
+                    `線性誤差低 (${Math.round(lineError)}px)`,
+                    `路徑接近端點連線 (${pathVsDiagonal.toFixed(2)})`
+                ]);
+                return;
+            }
+
+            if (!isClosed) {
+                showPrediction("🎨 自由曲線", 45 + 25 * (1 - straightness), [
+                    `閉合度較低 (${Math.round(closureRatio * 100)}%)`,
+                    `路徑彎曲度較高`
+                ]);
+                return;
+            }
+
+            const area = Math.abs(polygonArea(pts));
+            const perimeter = Math.max(pathLength, 1);
+            const circularity = (4 * Math.PI * area) / (perimeter * perimeter);
+            const aspectRatio = width / Math.max(height, 1);
+
+            const radii = pts.map(p => Math.hypot(p.x - centerX, p.y - centerY));
+            const averageRadius = radii.reduce((sum, value) => sum + value, 0) / radii.length;
+            const radiusDeviation = Math.sqrt(
+                radii.reduce((sum, value) => sum + Math.pow(value - averageRadius, 2), 0) / radii.length
+            );
+            const radiusVariation = averageRadius > 0 ? radiusDeviation / averageRadius : 1;
+
+            const topBand = pts.filter(p => p.y < minY + height * 0.42);
+            const leftTop = topBand.filter(p => p.x < centerX - width * 0.08);
+            const rightTop = topBand.filter(p => p.x > centerX + width * 0.08);
+            const centerTop = topBand.filter(p => Math.abs(p.x - centerX) <= width * 0.12);
+            const bottomBand = pts.filter(p => p.y > maxY - height * 0.22);
+
+            const leftLobeY = leftTop.length > 0 ? Math.min(...leftTop.map(p => p.y)) : minY;
+            const rightLobeY = rightTop.length > 0 ? Math.min(...rightTop.map(p => p.y)) : minY;
+            const cleftY = centerTop.length > 0 ? Math.max(...centerTop.map(p => p.y)) : minY;
+            const lobeY = (leftLobeY + rightLobeY) / 2;
+            const cleftDepth = cleftY - lobeY;
+            const normalizedCleft = clamp(cleftDepth / Math.max(1, height * 0.2), 0, 1);
+
+            const bottomCenter = bottomBand.length > 0
+                ? bottomBand.reduce((sum, p) => sum + p.x, 0) / bottomBand.length
+                : centerX;
+            const bottomCenterOffset = Math.abs(bottomCenter - centerX) / Math.max(1, width);
+            const bottomCenterScore = clamp(1 - bottomCenterOffset / 0.25, 0, 1);
+            const hasTwoTopLobes = leftTop.length >= 2 && rightTop.length >= 2;
+
+            const heartScore = (
+                0.32 * normalizedCleft +
+                0.22 * (hasTwoTopLobes ? 1 : 0) +
+                0.16 * bottomCenterScore +
+                0.15 * clamp(1 - Math.abs(aspectRatio - 1), 0, 1) +
+                0.15 * clamp(closureRatio, 0, 1)
+            );
+
+            const circleScore = (
+                0.4 * clamp((circularity - 0.58) / 0.35, 0, 1) +
+                0.3 * clamp((0.35 - radiusVariation) / 0.35, 0, 1) +
+                0.2 * clamp(1 - Math.abs(aspectRatio - 1) / 0.32, 0, 1) +
+                0.1 * clamp(closureRatio, 0, 1)
+            );
+
+            const simplified = simplifyRDP(pts, Math.max(8, diagonal * 0.055));
+            const cornerCount = countCorners(simplified);
+
+            const triangleCornerScore = clamp(1 - Math.abs(cornerCount - 3) / 2, 0, 1);
+            const topIndex = ys.indexOf(minY);
+            const apexCentering = clamp(1 - Math.abs(pts[topIndex].x - centerX) / Math.max(1, width * 0.22), 0, 1);
+            const bottomPoints = pts.filter(p => p.y > maxY - height * 0.18);
+            const bottomWidth = bottomPoints.length > 0
+                ? Math.max(...bottomPoints.map(p => p.x)) - Math.min(...bottomPoints.map(p => p.x))
+                : 0;
+            const baseScore = clamp(bottomWidth / Math.max(1, width * 0.65), 0, 1);
+            const triangleScore = (
+                0.42 * triangleCornerScore +
+                0.27 * apexCentering +
+                0.21 * baseScore +
+                0.1 * clamp(closureRatio, 0, 1)
+            );
+
+            const quadrilateralScore = clamp(1 - Math.abs(cornerCount - 4) / 3, 0, 1);
+            const squareAspectScore = clamp(1 - Math.abs(aspectRatio - 1) / 0.28, 0, 1);
+            const rectAspectSkew = Math.abs(Math.log(Math.max(aspectRatio, 1 / Math.max(aspectRatio, 0.0001))));
+            const rectangleAspectScore = clamp(rectAspectSkew / 0.4, 0, 1) * clamp(1 - rectAspectSkew / 1.4, 0, 1);
+
+            const squareScore = (
+                0.45 * quadrilateralScore +
+                0.4 * squareAspectScore +
+                0.15 * clamp(closureRatio, 0, 1)
+            );
+
+            const rectangleScore = (
+                0.46 * quadrilateralScore +
+                0.32 * rectangleAspectScore +
+                0.12 * clamp(1 - squareAspectScore, 0, 1) +
+                0.1 * clamp(closureRatio, 0, 1)
+            );
+
+            const isCircle = circularity > 0.72 && aspectRatio > 0.72 && aspectRatio < 1.38 && radiusVariation < 0.28;
+            if (isCircle && circleScore >= Math.max(heartScore, triangleScore, squareScore, rectangleScore)) {
+                showPrediction("⚪ 圓形 (Circle)", 55 + circleScore * 45, [
+                    `圓度 ${Math.round(clamp(circularity, 0, 1) * 100)}%`,
+                    `半徑變異低 (${radiusVariation.toFixed(2)})`
+                ]);
+                return;
+            }
+
+            const isHeart = hasTwoTopLobes && cleftDepth > height * 0.08 && bottomCenterOffset < 0.25 && aspectRatio > 0.55 && aspectRatio < 1.45;
+            if (isHeart && heartScore >= Math.max(triangleScore, squareScore, rectangleScore, circleScore * 0.9)) {
+                showPrediction("❤️ 愛心 (Heart)", 52 + heartScore * 48, [
+                    `中心凹陷明顯 (${Math.round(normalizedCleft * 100)}%)`,
+                    `上下對稱度佳`
+                ]);
+                return;
+            }
+
+            if (cornerCount <= 3 && aspectRatio > 0.55 && aspectRatio < 1.8 && triangleScore >= Math.max(squareScore, rectangleScore)) {
+                showPrediction("🔺 三角形 (Triangle)", 50 + triangleScore * 48, [
+                    `角點接近 3 個 (${cornerCount})`,
+                    `頂點與底邊幾何吻合`
+                ]);
+                return;
+            }
+
+            if (cornerCount <= 5) {
+                const isSquare = aspectRatio > 0.78 && aspectRatio < 1.28 && squareScore >= rectangleScore;
+                if (isSquare) {
+                    showPrediction("⬜ 正方形 (Square)", 50 + squareScore * 45, [
+                        `角點接近 4 個 (${cornerCount})`,
+                        `寬高比接近 1 (${aspectRatio.toFixed(2)})`
+                    ]);
+                } else {
+                    showPrediction("▭ 矩形 (Rectangle)", 48 + rectangleScore * 45, [
+                        `角點接近 4 個 (${cornerCount})`,
+                        `寬高比偏長 (${aspectRatio.toFixed(2)})`
+                    ]);
+                }
+                return;
+            }
+
+            showPrediction("🎨 自由曲線", 38 + clamp((1 - closureRatio) * 35 + (1 - quadrilateralScore) * 22, 0, 45), [
+                `角點數較不規則 (${cornerCount})`,
+                `幾何特徵與基本圖形差距較大`
+            ]);
         }
-    } else if (w/h > 5 || h/w > 5) {
-        guess = "📏 直線 (Line)";
-    }
-    document.getElementById('res').innerText = guess;
-}
+
+        function showPrediction(label, confidence, reasons) {
+            const safeConfidence = Math.round(clamp(confidence, 0, 100));
+            document.getElementById('res').innerText = label;
+            document.getElementById('confidence').innerText = `信心度：${safeConfidence}%`;
+            const reasonList = Array.isArray(reasons) && reasons.length > 0 ? reasons.slice(0, 3) : ["特徵不足"];
+            document.getElementById('explanation').innerText = `判斷依據：${reasonList.join(" · ")}`;
+        }
+
+        function clamp(value, minValue, maxValue) {
+            return Math.min(maxValue, Math.max(minValue, value));
+        }
+
+        function smoothPoints(points, passes = 2) {
+            let result = points.map(p => ({ x: p.x, y: p.y }));
+
+            for (let pass = 0; pass < passes; pass++) {
+                result = result.map((point, index) => {
+                    if (index === 0 || index === result.length - 1) return point;
+                    return {
+                        x: (result[index - 1].x + point.x + result[index + 1].x) / 3,
+                        y: (result[index - 1].y + point.y + result[index + 1].y) / 3
+                    };
+                });
+            }
+
+            return result;
+        }
+
+        function distance(a, b) {
+            return Math.hypot(a.x - b.x, a.y - b.y);
+        }
+
+        function getPathLength(points) {
+            let length = 0;
+            for (let i = 1; i < points.length; i++) {
+                length += distance(points[i - 1], points[i]);
+            }
+            return length;
+        }
+
+        function polygonArea(points) {
+            let area = 0;
+            for (let i = 0; i < points.length; i++) {
+                const current = points[i];
+                const next = points[(i + 1) % points.length];
+                area += current.x * next.y;
+                area -= next.x * current.y;
+            }
+            return area / 2;
+        }
+
+        function maxDistanceFromLine(points, start, end) {
+            const lineLength = distance(start, end);
+            if (lineLength === 0) return Infinity;
+
+            let maxDistance = 0;
+            for (const point of points) {
+                const crossProduct = Math.abs(
+                    (end.x - start.x) * (start.y - point.y) - (start.x - point.x) * (end.y - start.y)
+                );
+                maxDistance = Math.max(maxDistance, crossProduct / lineLength);
+            }
+            return maxDistance;
+        }
+
+        function simplifyRDP(points, epsilon) {
+            if (points.length < 3) return points;
+
+            let maximumDistance = 0;
+            let splitIndex = 0;
+            const first = points[0];
+            const last = points[points.length - 1];
+
+            for (let i = 1; i < points.length - 1; i++) {
+                const currentDistance = pointToSegmentDistance(points[i], first, last);
+                if (currentDistance > maximumDistance) {
+                    maximumDistance = currentDistance;
+                    splitIndex = i;
+                }
+            }
+
+            if (maximumDistance > epsilon) {
+                const left = simplifyRDP(points.slice(0, splitIndex + 1), epsilon);
+                const right = simplifyRDP(points.slice(splitIndex), epsilon);
+                return left.slice(0, -1).concat(right);
+            }
+
+            return [first, last];
+        }
+
+        function pointToSegmentDistance(point, start, end) {
+            const dx = end.x - start.x;
+            const dy = end.y - start.y;
+            if (dx === 0 && dy === 0) return distance(point, start);
+
+            const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)));
+            const projection = { x: start.x + t * dx, y: start.y + t * dy };
+            return distance(point, projection);
+        }
+
+        function countCorners(points) {
+            if (points.length < 4) return points.length;
+
+            let corners = 0;
+            for (let i = 1; i < points.length - 1; i++) {
+                const previous = points[i - 1];
+                const current = points[i];
+                const next = points[i + 1];
+
+                const angle1 = Math.atan2(current.y - previous.y, current.x - previous.x);
+                const angle2 = Math.atan2(next.y - current.y, next.x - current.x);
+                let angleDifference = Math.abs(angle2 - angle1);
+                if (angleDifference > Math.PI) angleDifference = 2 * Math.PI - angleDifference;
+                if (angleDifference > 0.45) corners++;
+            }
+
+            return corners;
+        }
     
         function windowResized() {
             resizeCanvas(windowWidth, windowHeight);
